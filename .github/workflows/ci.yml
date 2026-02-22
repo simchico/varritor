@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  format-and-compile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: clang-format check (excluding third_party)
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find . \
+            -type f \
+            \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' -o -name '*.h' -o -name '*.hpp' -o -name '*.ino' \) \
+            -not -path './third_party/*' \
+            -not -path './.git/*' \
+            -print0)
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo 'No C/C++/Arduino files found; skipping clang-format check.'
+            exit 0
+          fi
+
+          clang-format --dry-run --Werror "${files[@]}"
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install Arduino core (Nano target)
+        run: |
+          set -euo pipefail
+          arduino-cli config init --overwrite
+          arduino-cli config set board_manager.additional_urls '[]'
+          arduino-cli config set directories.user "$GITHUB_WORKSPACE/arduino"
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+
+      - name: Compile Arduino sketches for arduino:avr:nano
+        run: |
+          set -euo pipefail
+          mapfile -d '' sketches < <(find arduino/sketches -type f -name '*.ino' -print0)
+
+          if [ ${#sketches[@]} -eq 0 ]; then
+            echo 'No sketches found under arduino/sketches; skipping compile step.'
+            exit 0
+          fi
+
+          for sketch in "${sketches[@]}"; do
+            sketch_dir="$(dirname "$sketch")"
+            echo "Compiling $sketch_dir"
+            arduino-cli compile --fqbn arduino:avr:nano "$sketch_dir"
+          done
